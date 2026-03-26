@@ -5,6 +5,8 @@ from django.db import transaction
 from django.db.models import Count, Q
 
 from audit.services import AuditService
+from core.exceptions import BusinessRuleException, EVotingException, PollNotOpenException, ResourceNotFoundException, SystemException
+from core.logging_config import build_log_extra, get_logger
 from elections.models import Candidate, Poll, PollPosition
 from voting.models import Vote
 
@@ -14,24 +16,48 @@ User = get_user_model()
 class VoteCastingService:
     def __init__(self):
         self._audit = AuditService()
+        self._logger = get_logger("evoting.voting.cast")
 
     @transaction.atomic
     def cast(self, voter, validated_data):
+        """Cast votes for a voter with full validation and logging."""
+
         poll_id = validated_data["poll_id"]
-        poll = Poll.objects.prefetch_related(
-            "poll_positions__candidates", "stations"
-        ).get(pk=poll_id)
+        try:
+            poll = Poll.objects.prefetch_related(
+                "poll_positions__candidates", "stations"
+            ).get(pk=poll_id)
+        except Poll.DoesNotExist as exc:
+            self._logger.warning(
+                "Voter attempted to vote in missing poll",
+                extra=build_log_extra(
+                    user_identifier=voter.username,
+                    context={"poll_id": poll_id},
+                ),
+            )
+            raise ResourceNotFoundException("Poll not found") from exc
 
         self._validate_poll_eligibility(voter, poll)
 
         created_votes = []
         for vote_item in validated_data["votes"]:
-            pp = PollPosition.objects.get(pk=vote_item["poll_position_id"])
-            self._validate_position_vote(pp, poll, vote_item)
+            try:
+                poll_position = PollPosition.objects.get(pk=vote_item["poll_position_id"])
+            except PollPosition.DoesNotExist as exc:
+                self._logger.warning(
+                    "Invalid poll position in vote payload",
+                    extra=build_log_extra(
+                        user_identifier=voter.username,
+                        context={"poll_position_id": vote_item["poll_position_id"]},
+                    ),
+                )
+                raise ResourceNotFoundException("Poll position not found") from exc
+
+            self._validate_position_vote(poll_position, poll, vote_item)
 
             vote = Vote(
                 poll=poll,
-                poll_position=pp,
+                poll_position=poll_position,
                 voter=voter,
                 station=voter.voter_profile.station,
                 abstained=vote_item.get("abstain", False),
@@ -47,23 +73,30 @@ class VoteCastingService:
             voter.voter_profile.voter_card_number,
             f"Voted in poll: {poll.title} (Hash: {vote_hash})",
         )
+        self._logger.info(
+            "Votes cast successfully",
+            extra=build_log_extra(
+                user_identifier=voter.username,
+                context={"poll_id": poll.id, "vote_hash": vote_hash},
+            ),
+        )
         return created_votes
 
     def _validate_poll_eligibility(self, voter, poll):
         if poll.status != Poll.Status.OPEN:
-            raise ValueError("This poll is not currently open for voting.")
+            raise PollNotOpenException("This poll is not currently open for voting.")
 
         if not poll.stations.filter(pk=voter.voter_profile.station_id).exists():
-            raise ValueError("Your station is not assigned to this poll.")
+            raise BusinessRuleException("Your station is not assigned to this poll.")
 
     def _validate_position_vote(self, poll_position, poll, vote_item):
         if poll_position.poll_id != poll.id:
-            raise ValueError(
+            raise BusinessRuleException(
                 f"Position {poll_position.id} does not belong to this poll."
             )
         if not vote_item.get("abstain") and vote_item.get("candidate_id"):
             if not poll_position.candidates.filter(pk=vote_item["candidate_id"]).exists():
-                raise ValueError(
+                raise BusinessRuleException(
                     f"Candidate {vote_item['candidate_id']} is not assigned to this position."
                 )
 

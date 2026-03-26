@@ -3,6 +3,7 @@ from datetime import date, timedelta
 from django.conf import settings
 from rest_framework import serializers
 
+from core.logging_config import build_log_extra, get_logger
 from elections.models import Candidate, Poll, PollPosition, Position, VotingStation
 
 
@@ -59,20 +60,44 @@ class CandidateCreateSerializer(serializers.ModelSerializer):
         ]
 
     def validate_national_id(self, value):
+        logger = get_logger("evoting.elections.serializers.candidate")
         if Candidate.objects.filter(national_id=value).exists():
-            raise serializers.ValidationError("A candidate with this National ID already exists.")
+            logger.warning(
+                "Duplicate candidate national ID registration attempt",
+                extra=build_log_extra(context={"national_id_prefix": value[:4]}),
+            )
+            raise serializers.ValidationError(
+                {
+                    "code": "DUPLICATE_RECORD",
+                    "message": "A candidate with this National ID already exists.",
+                }
+            )
         return value
 
     def validate_date_of_birth(self, value):
         today = date.today()
         age = today.year - value.year
         if age < settings.MIN_CANDIDATE_AGE:
+            get_logger("evoting.elections.serializers.candidate").debug(
+                "Candidate below minimum age",
+                extra=build_log_extra(context={"age": age}),
+            )
             raise serializers.ValidationError(
-                f"Candidate must be at least {settings.MIN_CANDIDATE_AGE} years old."
+                {
+                    "code": "UNDERAGE_CANDIDATE",
+                    "message": f"Candidate must be at least {settings.MIN_CANDIDATE_AGE} years old.",
+                }
             )
         if age > settings.MAX_CANDIDATE_AGE:
+            get_logger("evoting.elections.serializers.candidate").debug(
+                "Candidate above maximum age",
+                extra=build_log_extra(context={"age": age}),
+            )
             raise serializers.ValidationError(
-                f"Candidate must not be older than {settings.MAX_CANDIDATE_AGE}."
+                {
+                    "code": "OVERAGE_CANDIDATE",
+                    "message": f"Candidate must not be older than {settings.MAX_CANDIDATE_AGE}.",
+                }
             )
         return value
 
@@ -157,14 +182,22 @@ class PollCreateSerializer(serializers.Serializer):
     station_ids = serializers.ListField(child=serializers.IntegerField(), min_length=1)
 
     def validate(self, data):
+        logger = get_logger("evoting.elections.serializers.poll")
         if data["end_date"] < data["start_date"]:
-            raise serializers.ValidationError({"end_date": "End date must be after start date."})
+            logger.debug("Poll end date before start date")
+            raise serializers.ValidationError(
+                {"end_date": "End date must be after start date."}
+            )
         invalid_positions = set(data["position_ids"]) - set(
             Position.objects.filter(
                 pk__in=data["position_ids"]
             ).values_list("pk", flat=True)
         )
         if invalid_positions:
+            logger.warning(
+                "Poll creation with invalid positions",
+                extra=build_log_extra(context={"invalid_positions": list(invalid_positions)}),
+            )
             raise serializers.ValidationError(
                 {"position_ids": f"Invalid or inactive positions: {invalid_positions}"}
             )
@@ -174,6 +207,10 @@ class PollCreateSerializer(serializers.Serializer):
             ).values_list("pk", flat=True)
         )
         if invalid_stations:
+            logger.warning(
+                "Poll creation with invalid stations",
+                extra=build_log_extra(context={"invalid_stations": list(invalid_stations)}),
+            )
             raise serializers.ValidationError(
                 {"station_ids": f"Invalid or inactive stations: {invalid_stations}"}
             )

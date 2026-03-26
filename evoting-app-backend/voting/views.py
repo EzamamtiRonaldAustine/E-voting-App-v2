@@ -4,6 +4,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.permissions import IsAdminOrReadOnlyVoter, IsAdminUser, IsVerifiedVoter
+from core.exceptions import BusinessRuleException, EVotingException, PollNotOpenException, ResourceNotFoundException
+from core.response_formatter import error_response_from_exception, success_response
 from elections.models import Poll
 from voting.serializers import CastVoteSerializer
 from voting.services import (
@@ -77,16 +79,36 @@ class CastVoteView(APIView):
         serializer.is_valid(raise_exception=True)
 
         service = VoteCastingService()
+        correlation_id = getattr(request, "correlation_id", None)
         try:
             votes = service.cast(request.user, serializer.validated_data)
-        except (ValueError, Poll.DoesNotExist) as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except ResourceNotFoundException as exc:
+            return Response(
+                error_response_from_exception(exc, correlation_id=correlation_id),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except PollNotOpenException as exc:
+            return Response(
+                error_response_from_exception(exc, correlation_id=correlation_id),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except BusinessRuleException as exc:
+            return Response(
+                error_response_from_exception(exc, correlation_id=correlation_id),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except EVotingException as exc:
+            return Response(
+                error_response_from_exception(exc, correlation_id=correlation_id),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         vote_hash = votes[0].vote_hash if votes else ""
-        return Response({
-            "detail": "Your vote has been recorded successfully.",
+        payload = {
+            "message": "Your vote has been recorded successfully.",
             "vote_reference": vote_hash,
-        })
+        }
+        return Response(success_response(payload, correlation_id=correlation_id))
 
 
 class VotingHistoryView(APIView):
@@ -107,7 +129,7 @@ class PollResultsView(APIView):
             results = service.get_poll_results(pk)
         except Poll.DoesNotExist:
             return Response({"detail": "Poll not found."}, status=status.HTTP_404_NOT_FOUND)
-        return Response(results)
+        return Response(success_response(results, correlation_id=getattr(request, "correlation_id", None)))
 
 
 class StationResultsView(APIView):
@@ -119,7 +141,7 @@ class StationResultsView(APIView):
             results = service.get_station_results(pk)
         except Poll.DoesNotExist:
             return Response({"detail": "Poll not found."}, status=status.HTTP_404_NOT_FOUND)
-        return Response(results)
+        return Response(success_response(results, correlation_id=getattr(request, "correlation_id", None)))
 
 
 class ClosedPollResultsView(APIView):
@@ -131,7 +153,7 @@ class ClosedPollResultsView(APIView):
         results = []
         for poll in closed_polls:
             results.append(service.get_poll_results(poll.id))
-        return Response(results)
+        return Response(success_response(results, correlation_id=getattr(request, "correlation_id", None)))
 
 
 class SystemStatisticsView(APIView):
@@ -139,10 +161,13 @@ class SystemStatisticsView(APIView):
 
     def get(self, request):
         service = StatisticsService()
-        return Response({
+        payload = {
             "overview": service.get_system_overview(),
             "demographics": service.get_voter_demographics(),
             "station_load": service.get_station_load(),
             "party_distribution": service.get_party_distribution(),
             "education_distribution": service.get_education_distribution(),
-        })
+        }
+        return Response(
+            success_response(payload, correlation_id=getattr(request, "correlation_id", None))
+        )

@@ -36,6 +36,8 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    # Project-specific request logging with correlation IDs
+    "core.middleware.RequestLoggingMiddleware",
 ]
 
 ROOT_URLCONF = "evoting.urls"
@@ -120,3 +122,105 @@ REQUIRED_EDUCATION_LEVELS = [
     ("phd", "PhD"),
     ("doctorate", "Doctorate"),
 ]
+
+
+# Logging configuration for the e-voting backend.
+#
+# This configuration is intentionally concise but structured so that
+# application logs can be filtered by level and component. It works
+# together with the helper functions in core.logging_config.
+
+LOG_DIR = BASE_DIR / "logs"
+LOG_DIR.mkdir(exist_ok=True)
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "%(asctime)s %(levelname)s %(name)s [corr=%(correlation_id)s user=%(user_identifier)s] %(message)s",
+        },
+        "simple": {
+            "format": "%(levelname)s %(name)s: %(message)s",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "simple",
+        },
+        "debug_file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": str(LOG_DIR / "debug.log"),
+            "maxBytes": 10 * 1024 * 1024,
+            "backupCount": 5,
+            "formatter": "verbose",
+            "level": "DEBUG",
+        },
+        "error_file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": str(LOG_DIR / "errors.log"),
+            "maxBytes": 10 * 1024 * 1024,
+            "backupCount": 5,
+            "formatter": "verbose",
+            "level": "ERROR",
+        },
+        "audit_file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": str(LOG_DIR / "audit.log"),
+            "maxBytes": 10 * 1024 * 1024,
+            "backupCount": 5,
+            "formatter": "verbose",
+            "level": "INFO",
+        },
+        "security_file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": str(LOG_DIR / "security.log"),
+            "maxBytes": 10 * 1024 * 1024,
+            "backupCount": 5,
+            "formatter": "verbose",
+            "level": "WARNING",
+        },
+        "performance_file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": str(LOG_DIR / "performance.log"),
+            "maxBytes": 10 * 1024 * 1024,
+            "backupCount": 5,
+            "formatter": "verbose",
+            "level": "INFO",
+        },
+    },
+    "loggers": {
+        # Default project logger
+        "evoting": {
+            "handlers": ["console", "debug_file"],
+            "level": "DEBUG" if DEBUG else "INFO",
+            "propagate": False,
+        },
+        # Request/response middleware logger
+        "evoting.request": {
+            "handlers": ["console", "debug_file", "performance_file"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        # Security-sensitive events
+        "evoting.security": {
+            "handlers": ["console", "security_file"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        # Audit events are already stored in the database; this logger is
+        # available if file-based audit traces are also required.
+        "evoting.audit": {
+            "handlers": ["audit_file"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        # Fallback: route Django's own logs to console and debug file.
+        "django": {
+            "handlers": ["console", "debug_file"],
+            "level": "INFO",
+            "propagate": True,
+        },
+    },
+}

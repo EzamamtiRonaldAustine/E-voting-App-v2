@@ -5,6 +5,7 @@ from rest_framework.views import APIView
 from accounts.permissions import IsAdminUser
 from audit.serializers import AuditLogSerializer
 from audit.services import AuditService
+from core.response_formatter import success_response
 
 
 class AuditLogListView(generics.ListAPIView):
@@ -27,4 +28,6 @@ class AuditActionTypesView(APIView):
 
     def get(self, request):
         types = list(AuditService.get_action_types())
-        return Response(types)
+        return Response(
+            success_response(types, correlation_id=getattr(request, "correlation_id", None))
+        )

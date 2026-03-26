@@ -4,6 +4,9 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.permissions import IsAdminOrReadOnlyVoter, IsAdminUser
+from core.exceptions import BusinessRuleException, EVotingException, ResourceNotFoundException
+from core.logging_config import get_logger
+from core.response_formatter import error_response_from_exception, success_response
 from elections.models import Candidate, Poll, Position, VotingStation
 from elections.serializers import (
     AssignCandidatesSerializer,
@@ -62,13 +65,21 @@ class CandidateDeactivateView(APIView):
 
     def post(self, request, pk):
         service = CandidateService()
+        correlation_id = getattr(request, "correlation_id", None)
         try:
             service.deactivate(pk, request.user)
-        except Candidate.DoesNotExist:
-            return Response({"detail": "Candidate not found."}, status=status.HTTP_404_NOT_FOUND)
-        except ValueError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        return Response({"detail": "Candidate deactivated."})
+        except ResourceNotFoundException as exc:
+            return Response(
+                error_response_from_exception(exc, correlation_id=correlation_id),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except BusinessRuleException as exc:
+            return Response(
+                error_response_from_exception(exc, correlation_id=correlation_id),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        payload = {"message": "Candidate deactivated."}
+        return Response(success_response(payload, correlation_id=correlation_id))
 
 
 class VotingStationListCreateView(generics.ListCreateAPIView):
@@ -100,11 +111,16 @@ class VotingStationDeactivateView(APIView):
 
     def post(self, request, pk):
         service = VotingStationService()
+        correlation_id = getattr(request, "correlation_id", None)
         try:
             service.deactivate(pk, request.user)
-        except VotingStation.DoesNotExist:
-            return Response({"detail": "Station not found."}, status=status.HTTP_404_NOT_FOUND)
-        return Response({"detail": "Station deactivated."})
+        except ResourceNotFoundException as exc:
+            return Response(
+                error_response_from_exception(exc, correlation_id=correlation_id),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        payload = {"message": "Station deactivated."}
+        return Response(success_response(payload, correlation_id=correlation_id))
 
 
 class PositionListCreateView(generics.ListCreateAPIView):
@@ -140,13 +156,21 @@ class PositionDeactivateView(APIView):
 
     def post(self, request, pk):
         service = PositionService()
+        correlation_id = getattr(request, "correlation_id", None)
         try:
             service.deactivate(pk, request.user)
-        except Position.DoesNotExist:
-            return Response({"detail": "Position not found."}, status=status.HTTP_404_NOT_FOUND)
-        except ValueError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        return Response({"detail": "Position deactivated."})
+        except ResourceNotFoundException as exc:
+            return Response(
+                error_response_from_exception(exc, correlation_id=correlation_id),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except BusinessRuleException as exc:
+            return Response(
+                error_response_from_exception(exc, correlation_id=correlation_id),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        payload = {"message": "Position deactivated."}
+        return Response(success_response(payload, correlation_id=correlation_id))
 
 
 class PollListCreateView(generics.ListCreateAPIView):
@@ -158,9 +182,17 @@ class PollListCreateView(generics.ListCreateAPIView):
         serializer = PollCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         service = PollService()
-        poll = service.create(serializer.validated_data, request.user)
+        correlation_id = getattr(request, "correlation_id", None)
+        try:
+            poll = service.create(serializer.validated_data, request.user)
+        except EVotingException as exc:
+            return Response(
+                error_response_from_exception(exc, correlation_id=correlation_id),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        payload = PollSerializer(poll).data
         return Response(
-            PollSerializer(poll).data,
+            success_response(payload, correlation_id=correlation_id),
             status=status.HTTP_201_CREATED,
         )
 
@@ -188,11 +220,16 @@ class PollUpdateView(APIView):
         serializer.is_valid(raise_exception=True)
 
         service = PollService()
+        correlation_id = getattr(request, "correlation_id", None)
         try:
             service.update(poll, serializer.validated_data, request.user)
-        except ValueError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(PollSerializer(poll).data)
+        except BusinessRuleException as exc:
+            return Response(
+                error_response_from_exception(exc, correlation_id=correlation_id),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        payload = PollSerializer(poll).data
+        return Response(success_response(payload, correlation_id=correlation_id))
 
 
 class PollDeleteView(APIView):
@@ -200,12 +237,19 @@ class PollDeleteView(APIView):
 
     def delete(self, request, pk):
         service = PollService()
+        correlation_id = getattr(request, "correlation_id", None)
         try:
             service.delete(pk, request.user)
-        except Poll.DoesNotExist:
-            return Response({"detail": "Poll not found."}, status=status.HTTP_404_NOT_FOUND)
-        except ValueError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except ResourceNotFoundException as exc:
+            return Response(
+                error_response_from_exception(exc, correlation_id=correlation_id),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except BusinessRuleException as exc:
+            return Response(
+                error_response_from_exception(exc, correlation_id=correlation_id),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -220,13 +264,21 @@ class PollToggleStatusView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         service = PollService()
+        correlation_id = getattr(request, "correlation_id", None)
         try:
             poll = service.toggle_status(pk, action, request.user)
-        except Poll.DoesNotExist:
-            return Response({"detail": "Poll not found."}, status=status.HTTP_404_NOT_FOUND)
-        except ValueError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(PollSerializer(poll).data)
+        except ResourceNotFoundException as exc:
+            return Response(
+                error_response_from_exception(exc, correlation_id=correlation_id),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except BusinessRuleException as exc:
+            return Response(
+                error_response_from_exception(exc, correlation_id=correlation_id),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        payload = PollSerializer(poll).data
+        return Response(success_response(payload, correlation_id=correlation_id))
 
 
 class AssignCandidatesView(APIView):
@@ -237,15 +289,25 @@ class AssignCandidatesView(APIView):
         serializer = AssignCandidatesSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         service = PollService()
+        correlation_id = getattr(request, "correlation_id", None)
         try:
             poll_position = service.assign_candidates(
                 serializer.validated_data["poll_position_id"],
                 serializer.validated_data["candidate_ids"],
                 request.user,
             )
-        except ValueError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        return Response({
-            "detail": f"Candidates assigned to {poll_position.position.title}.",
+        except ResourceNotFoundException as exc:
+            return Response(
+                error_response_from_exception(exc, correlation_id=correlation_id),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except BusinessRuleException as exc:
+            return Response(
+                error_response_from_exception(exc, correlation_id=correlation_id),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        payload = {
+            "message": f"Candidates assigned to {poll_position.position.title}.",
             "candidate_count": poll_position.candidates.count(),
-        })
+        }
+        return Response(success_response(payload, correlation_id=correlation_id))

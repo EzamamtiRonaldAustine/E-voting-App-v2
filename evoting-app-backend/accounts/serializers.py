@@ -5,9 +5,13 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from accounts.models import VoterProfile
+from core.logging_config import build_log_extra, get_logger
 from elections.models import VotingStation
 
 User = get_user_model()
+
+
+_registration_logger = get_logger("evoting.accounts.serializers.registration")
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -63,27 +67,62 @@ class VoterRegistrationSerializer(serializers.Serializer):
     confirm_password = serializers.CharField(min_length=6, write_only=True)
 
     def validate_national_id(self, value):
+        """Ensure the national ID is unique for voter registrations.
+
+        Logging here helps trace repeated registration attempts
+        with the same identifier without exposing sensitive data
+        in responses.
+        """
+
         if VoterProfile.objects.filter(national_id=value).exists():
-            raise serializers.ValidationError("A voter with this National ID already exists.")
+            _registration_logger.warning(
+                "Duplicate voter national ID registration attempt",
+                extra=build_log_extra(context={"national_id_prefix": value[:4]}),
+            )
+            raise serializers.ValidationError(
+                {
+                    "code": "DUPLICATE_RECORD",
+                    "message": "A voter with this National ID already exists.",
+                }
+            )
         return value
 
     def validate_date_of_birth(self, value):
         today = date.today()
         age = today.year - value.year
         if age < 18:
+            _registration_logger.debug(
+                "Voter below minimum age attempted registration",
+                extra=build_log_extra(context={"calculated_age": age}),
+            )
             raise serializers.ValidationError(
-                "You must be at least 18 years old."
+                {
+                    "code": "UNDERAGE_VOTER",
+                    "message": "You must be at least 18 years old.",
+                }
             )
         return value
 
     def validate_station_id(self, value):
         if not VotingStation.objects.filter(pk=value).exists():
-            raise serializers.ValidationError("Invalid or inactive voting station.")
+            _registration_logger.warning(
+                "Registration with invalid station id",
+                extra=build_log_extra(context={"station_id": value}),
+            )
+            raise serializers.ValidationError(
+                {
+                    "code": "INVALID_STATION",
+                    "message": "Invalid or inactive voting station.",
+                }
+            )
         return value
 
     def validate(self, data):
         if data["password"] != data["confirm_password"]:
-            raise serializers.ValidationError("Passwords do not match.")
+            _registration_logger.debug("Password confirmation mismatch during registration")
+            raise serializers.ValidationError(
+                {"confirm_password": "Passwords do not match."}
+            )
         return data
 
 
@@ -102,6 +141,10 @@ class AdminCreateSerializer(serializers.Serializer):
 
     def validate_username(self, value):
         if User.objects.filter(username=value).exists():
+            get_logger("evoting.accounts.serializers.admin").warning(
+                "Duplicate admin username registration attempt",
+                extra=build_log_extra(context={"username": value}),
+            )
             raise serializers.ValidationError("Username already exists.")
         return value
 

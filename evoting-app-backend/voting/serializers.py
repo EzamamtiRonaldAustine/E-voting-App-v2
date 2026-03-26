@@ -1,5 +1,7 @@
 from rest_framework import serializers
 
+from core.logging_config import build_log_extra, get_logger
+
 
 class CastVoteItemSerializer(serializers.Serializer):
     poll_position_id = serializers.IntegerField()
@@ -12,8 +14,13 @@ class CastVoteSerializer(serializers.Serializer):
     votes = CastVoteItemSerializer(many=True)
 
     def validate_votes(self, value):
+        logger = get_logger("evoting.voting.serializers.cast")
         for item in value:
             if item.get("abstain") and item.get("candidate_id"):
+                logger.warning(
+                    "Invalid vote payload: abstain with candidate selected",
+                    extra=build_log_extra(context={"poll_position_id": item.get("poll_position_id")}),
+                )
                 raise serializers.ValidationError(
                     "Cannot both abstain and select a candidate."
                 )

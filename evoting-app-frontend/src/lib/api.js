@@ -22,6 +22,13 @@ async function request(endpoint, options = {}) {
   if (res.status === 204) return null;
   const data = await res.json();
   if (!res.ok) throw { status: res.status, data };
+
+  // Support both plain payloads and the standardized
+  // { success: true, data: {...} } backend response shape.
+  if (data && data.success === true && Object.prototype.hasOwnProperty.call(data, "data")) {
+    return data.data;
+  }
+
   return data;
 }
 
@@ -60,10 +67,12 @@ export async function loginAdmin(username, password) {
   });
   const data = await res.json();
   if (!res.ok) throw data;
-  localStorage.setItem("access_token", data.access);
-  localStorage.setItem("refresh_token", data.refresh);
-  localStorage.setItem("user", JSON.stringify(data.user));
-  return data.user;
+  const payload =
+    data && data.success === true && data.data ? data.data : data;
+  localStorage.setItem("access_token", payload.access);
+  localStorage.setItem("refresh_token", payload.refresh);
+  localStorage.setItem("user", JSON.stringify(payload.user));
+  return payload.user;
 }
 
 export async function loginVoter(voter_card_number, password) {
@@ -74,10 +83,12 @@ export async function loginVoter(voter_card_number, password) {
   });
   const data = await res.json();
   if (!res.ok) throw data;
-  localStorage.setItem("access_token", data.access);
-  localStorage.setItem("refresh_token", data.refresh);
-  localStorage.setItem("user", JSON.stringify(data.user));
-  return data.user;
+  const payload =
+    data && data.success === true && data.data ? data.data : data;
+  localStorage.setItem("access_token", payload.access);
+  localStorage.setItem("refresh_token", payload.refresh);
+  localStorage.setItem("user", JSON.stringify(payload.user));
+  return payload.user;
 }
 
 export async function registerVoter(formData) {
@@ -88,7 +99,9 @@ export async function registerVoter(formData) {
   });
   const data = await res.json();
   if (!res.ok) throw data;
-  return data;
+  const payload =
+    data && data.success === true && data.data ? data.data : data;
+  return payload;
 }
 
 export function logout() {
